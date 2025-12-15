@@ -1,0 +1,101 @@
+blueprint:
+  name: Frost Protection for Climate Device
+  description: >
+
+    **Version:** 20251215
+    
+    Turns on a climate device with an optional preset or target temperature
+    when the temperature drops below a specified threshold.
+  domain: automation
+  input:
+    climate_entity:
+      name: Climate Device
+      selector:
+        entity:
+          domain: climate
+
+    temp_sensor:
+      name: Temperature Sensor
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    frost_threshold:
+      name: Frost Protection Threshold (input_number)
+      selector:
+        entity:
+          domain: input_number
+
+    use_preset:
+      name: Use Preset Mode
+      default: false
+      selector:
+        boolean:
+
+    preset_mode:
+      name: Preset Mode to Use
+      default: away
+      selector:
+        select:
+          options:
+            - away
+            - home
+            - eco
+            - comfort
+            - sleep
+            - activity
+
+    set_target_temp:
+      name: Set Target Temperature
+      default: false
+      selector:
+        boolean:
+
+    target_temperature:
+      name: Target Temperature
+      description: Temperature to set the climate device to
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 0.5
+          unit_of_measurement: °C
+
+mode: single
+
+trigger:
+  - platform: template
+    value_template: >
+      {% set temp = states(input.temp_sensor) | float(99) %}
+      {% set threshold = states(input.frost_threshold) | float(0) %}
+      {{ temp < threshold }}
+
+condition:
+  - condition: template
+    value_template: >
+      {{ not is_state(input.climate_entity, 'heat') }}
+
+action:
+  - service: climate.set_hvac_mode
+    target:
+      entity_id: !input climate_entity
+    data:
+      hvac_mode: heat
+
+  - if: "{{ input.use_preset }}"
+    then:
+      - service: climate.set_preset_mode
+        target:
+          entity_id: !input climate_entity
+        data:
+          preset_mode: !input preset_mode
+
+  - if: "{{ input.set_target_temp }}"
+    then:
+      - service: climate.set_temperature
+        target:
+          entity_id: !input climate_entity
+        data:
+          temperature: !input target_temperature
