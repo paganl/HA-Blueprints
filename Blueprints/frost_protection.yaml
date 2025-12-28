@@ -1,9 +1,8 @@
 blueprint:
   name: Frost Protection for Climate Device
   description: >
+    **Version:** 20251228
 
-    **Version:** 20251215
-    
     Turns on a climate device with an optional preset or target temperature
     when the temperature drops below a specified threshold.
   domain: automation
@@ -99,5 +98,3 @@ action:
           entity_id: !input climate_entity
         data:
           temperature: !input target_temperature
-
-
