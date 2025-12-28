@@ -78,8 +78,7 @@ condition:
       {{ not is_state('[[ input.climate_entity ]]', 'heat') }}
 
 action:
-  - type: call-service
-    service: climate.set_hvac_mode
+  - service: climate.set_hvac_mode
     target:
       entity_id: !input climate_entity
     data:
@@ -87,8 +86,7 @@ action:
 
   - if: "{{ input.use_preset }}"
     then:
-      - type: call-service
-        service: climate.set_preset_mode
+      - service: climate.set_preset_mode
         target:
           entity_id: !input climate_entity
         data:
@@ -96,10 +94,10 @@ action:
 
   - if: "{{ input.set_target_temp }}"
     then:
-      - type: call-service
-        service: climate.set_temperature
+      - service: climate.set_temperature
         target:
           entity_id: !input climate_entity
         data:
           temperature: !input target_temperature
+
 
