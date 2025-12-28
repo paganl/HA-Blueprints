@@ -68,17 +68,18 @@ mode: single
 trigger:
   - platform: template
     value_template: >
-      {% set temp = states(input.temp_sensor) | float(99) %}
-      {% set threshold = states(input.frost_threshold) | float(0) %}
+      {% set temp = states('[[ input.temp_sensor ]]') | float(99) %}
+      {% set threshold = states('[[ input.frost_threshold ]]') | float(0) %}
       {{ temp < threshold }}
 
 condition:
   - condition: template
     value_template: >
-      {{ not is_state(input.climate_entity, 'heat') }}
+      {{ not is_state('[[ input.climate_entity ]]', 'heat') }}
 
 action:
-  - service: climate.set_hvac_mode
+  - type: call-service
+    service: climate.set_hvac_mode
     target:
       entity_id: !input climate_entity
     data:
@@ -86,7 +87,8 @@ action:
 
   - if: "{{ input.use_preset }}"
     then:
-      - service: climate.set_preset_mode
+      - type: call-service
+        service: climate.set_preset_mode
         target:
           entity_id: !input climate_entity
         data:
@@ -94,8 +96,10 @@ action:
 
   - if: "{{ input.set_target_temp }}"
     then:
-      - service: climate.set_temperature
+      - type: call-service
+        service: climate.set_temperature
         target:
           entity_id: !input climate_entity
         data:
           temperature: !input target_temperature
+
