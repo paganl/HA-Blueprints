@@ -1,0 +1,173 @@
+blueprint:
+  name: Close blinds based on UV, room temperature and sun angle
+  description: >
+    Closes one or more blinds when UV, room temperature, outside temperature,
+    sun/window angle and weather-code conditions are met.
+  domain: automation
+
+  input:
+    climate_entity:
+      name: Room climate entity
+      selector:
+        entity:
+          domain: climate
+
+    cover_entities:
+      name: Blind covers to close
+      selector:
+        entity:
+          domain: cover
+          multiple: true
+
+    uv_sensor:
+      name: UV index sensor
+      default: sensor.openweathermap_uv_index
+      selector:
+        entity:
+          domain: sensor
+
+    sun_angle_similarity_sensor:
+      name: Sun/window angle similarity sensor
+      default: sensor.sun_window_ang_similarity
+      selector:
+        entity:
+          domain: sensor
+
+    weather_code_sensor:
+      name: OpenWeatherMap weather code sensor
+      default: sensor.openweathermap_weather_code
+      selector:
+        entity:
+          domain: sensor
+
+    outside_temperature_sensor:
+      name: Outside temperature sensor
+      default: sensor.openweathermap_temperature
+      selector:
+        entity:
+          domain: sensor
+
+    automation_enabled_boolean:
+      name: Automation enabled helper
+      default: input_boolean.blind_automation_on_off
+      selector:
+        entity:
+          domain: input_boolean
+
+    uv_threshold:
+      name: UV threshold
+      default: 4
+      selector:
+        number:
+          min: 0
+          max: 12
+          step: 0.1
+          mode: box
+
+    internal_trigger_temperature:
+      name: Internal trigger temperature
+      description: Temperature that can trigger the automation after 5 minutes.
+      default: 22
+      selector:
+        number:
+          min: 10
+          max: 35
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: box
+
+    internal_condition_temperature:
+      name: Internal condition temperature
+      description: Minimum internal temperature required before closing blinds.
+      default: 21
+      selector:
+        number:
+          min: 10
+          max: 35
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: box
+
+    outside_temperature_threshold:
+      name: Outside temperature threshold
+      default: 21
+      selector:
+        number:
+          min: -10
+          max: 45
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: box
+
+    sun_angle_similarity_threshold:
+      name: Sun/window angle similarity threshold
+      default: 0.57
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.01
+          mode: box
+
+mode: single
+
+trigger:
+  - platform: numeric_state
+    entity_id: !input uv_sensor
+    above: !input uv_threshold
+
+  - platform: numeric_state
+    entity_id: !input climate_entity
+    attribute: current_temperature
+    above: !input internal_trigger_temperature
+    for:
+      minutes: 5
+
+  - platform: numeric_state
+    entity_id: !input sun_angle_similarity_sensor
+    above: !input sun_angle_similarity_threshold
+
+  - platform: state
+    entity_id: !input weather_code_sensor
+
+condition:
+  - condition: state
+    entity_id: !input automation_enabled_boolean
+    state: "on"
+
+  - condition: numeric_state
+    entity_id: !input climate_entity
+    attribute: current_temperature
+    above: !input internal_condition_temperature
+
+  - condition: numeric_state
+    entity_id: !input uv_sensor
+    above: !input uv_threshold
+
+  - condition: numeric_state
+    entity_id: !input sun_angle_similarity_sensor
+    above: !input sun_angle_similarity_threshold
+
+  - condition: numeric_state
+    entity_id: !input outside_temperature_sensor
+    above: !input outside_temperature_threshold
+
+  - condition: or
+    conditions:
+      # Drizzle, rain, thunderstorm, snow etc.
+      - condition: numeric_state
+        entity_id: !input weather_code_sensor
+        above: 299
+        below: 600
+
+      # Clear / mostly clear / scattered clouds / broken clouds.
+      # This includes codes 800, 801, 802 and 803, but excludes 804.
+      - condition: numeric_state
+        entity_id: !input weather_code_sensor
+        above: 799
+        below: 804
+
+action:
+  - service: cover.close_cover
+    target:
+      entity_id: !input cover_entities
