@@ -148,10 +148,6 @@ condition:
     entity_id: !input sun_angle_similarity_sensor
     above: !input sun_angle_similarity_threshold
 
-  - condition: numeric_state
-    entity_id: !input outside_temperature_sensor
-    above: !input outside_temperature_threshold
-
   - condition: or
     conditions:
       # Drizzle, rain, thunderstorm, snow etc.
