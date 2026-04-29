@@ -3,6 +3,8 @@ blueprint:
   description: >
     Closes one or more blinds when UV, room temperature, outside temperature,
     sun/window angle and weather-code conditions are met.
+
+    Version 20260429-2
   domain: automation
 
   input:
