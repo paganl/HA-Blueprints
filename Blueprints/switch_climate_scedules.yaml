@@ -1,0 +1,127 @@
+blueprint:
+  name: Presence - Switch Comfort/Away Schedules
+  description: >
+    Switches between comfort and away schedule switches based on the number
+    of people in a Home Assistant zone, normally zone.home.
+
+    Designed for Scheduler Card / scheduler-component style schedule switches,
+    where you have one or more comfort schedules and one or more away schedules.
+    
+    Version: 202605-16
+
+  domain: automation
+
+  input:
+    home_zone:
+      name: Home zone
+      description: Usually zone.home. The state of the zone is the number of people currently in it.
+      default: zone.home
+      selector:
+        entity:
+          domain: zone
+
+    minimum_people_home:
+      name: Minimum people home
+      description: If this many or more people are in the zone, comfort schedules are enabled.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 20
+          step: 1
+          mode: box
+
+    comfort_schedules:
+      name: Comfort / occupied schedule switches
+      description: These are turned on when someone is home.
+      selector:
+        target:
+          entity:
+            domain: switch
+
+    away_schedules:
+      name: Away / setback schedule switches
+      description: These are turned on when nobody is home.
+      selector:
+        target:
+          entity:
+            domain: switch
+
+    turn_off_inactive_schedules:
+      name: Turn off inactive schedule set
+      description: Turn off away schedules when home, and turn off comfort schedules when away.
+      default: true
+      selector:
+        boolean:
+
+    settle_delay:
+      name: Presence settle delay
+      description: Optional delay to avoid switching schedules during brief GPS/presence flapping.
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 30
+      selector:
+        duration:
+
+    present_extra_actions:
+      name: Extra actions when someone is home
+      description: Optional. For example, call your Mitsubishi sync script after enabling comfort schedules.
+      default: []
+      selector:
+        action:
+
+    away_extra_actions:
+      name: Extra actions when nobody is home
+      description: Optional. For example, call your Mitsubishi sync script after enabling away schedules.
+      default: []
+      selector:
+        action:
+
+mode: restart
+
+variables:
+  home_zone_entity: !input home_zone
+  minimum_people_home_value: !input minimum_people_home
+  turn_off_inactive: !input turn_off_inactive_schedules
+
+triggers:
+  - trigger: homeassistant
+    event: start
+
+  - trigger: state
+    entity_id: !input home_zone
+
+actions:
+  - delay: !input settle_delay
+
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ (states(home_zone_entity) | int(0)) >= (minimum_people_home_value | int(1)) }}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ turn_off_inactive }}"
+            then:
+              - action: switch.turn_off
+                target: !input away_schedules
+
+          - action: switch.turn_on
+            target: !input comfort_schedules
+
+          - sequence: !input present_extra_actions
+
+    default:
+      - if:
+          - condition: template
+            value_template: "{{ turn_off_inactive }}"
+        then:
+          - action: switch.turn_off
+            target: !input comfort_schedules
+
+      - action: switch.turn_on
+        target: !input away_schedules
+
+      - sequence: !input away_extra_actions
