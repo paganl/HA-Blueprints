@@ -1,47 +1,64 @@
 blueprint:
-  name: Presence - Switch Comfort/Away Schedules
+  name: Person Presence - Switch Climate Schedules
   description: >
-    Switches between comfort and away schedule switches based on the number
-    of people in a Home Assistant zone, normally zone.home.
+    Switches between comfort and away schedule switches for one specific climate
+    unit, based on selected person entities.
 
-    Designed for Scheduler Card / scheduler-component style schedule switches,
-    where you have one or more comfort schedules and one or more away schedules.
-    
-    Version: 202605-16
+    Designed for Mitsubishi AC / heat pump schedules where presets are not used.
+    The blueprint does not directly set HVAC mode or temperature. It only enables
+    the correct schedule set for the selected climate unit.
+
+    Version: 202605-17
 
   domain: automation
 
   input:
-    home_zone:
-      name: Home zone
-      description: Usually zone.home. The state of the zone is the number of people currently in it.
-      default: zone.home
+    climate_unit:
+      name: Climate unit
+      description: The climate entity this schedule switching automation belongs to.
       selector:
         entity:
-          domain: zone
+          domain: climate
 
-    minimum_people_home:
-      name: Minimum people home
-      description: If this many or more people are in the zone, comfort schedules are enabled.
-      default: 1
+    people:
+      name: People linked to this climate unit
+      description: >
+        Select the person entities that should make this climate unit use its
+        comfort schedule when they are home.
       selector:
-        number:
-          min: 1
-          max: 20
-          step: 1
-          mode: box
+        entity:
+          domain: person
+          multiple: true
+
+    presence_rule:
+      name: Presence rule
+      description: >
+        Choose whether comfort mode should be active when any selected person is
+        home, or only when all selected people are home.
+      default: any_selected_person_home
+      selector:
+        select:
+          options:
+            - label: Any selected person is home
+              value: any_selected_person_home
+            - label: All selected people are home
+              value: all_selected_people_home
 
     comfort_schedules:
-      name: Comfort / occupied schedule switches
-      description: These are turned on when someone is home.
+      name: Comfort schedule switches
+      description: >
+        Schedule switch or switches to turn on when the selected person condition
+        is met.
       selector:
         target:
           entity:
             domain: switch
 
     away_schedules:
-      name: Away / setback schedule switches
-      description: These are turned on when nobody is home.
+      name: Away schedule switches
+      description: >
+        Schedule switch or switches to turn on when the selected person condition
+        is not met.
       selector:
         target:
           entity:
@@ -49,14 +66,26 @@ blueprint:
 
     turn_off_inactive_schedules:
       name: Turn off inactive schedule set
-      description: Turn off away schedules when home, and turn off comfort schedules when away.
+      description: >
+        If enabled, away schedules are turned off when comfort is active, and
+        comfort schedules are turned off when away is active.
+      default: true
+      selector:
+        boolean:
+
+    require_climate_available:
+      name: Require climate unit to be available
+      description: >
+        If enabled, the automation will not switch schedules while the selected
+        climate entity is unavailable or unknown.
       default: true
       selector:
         boolean:
 
     settle_delay:
       name: Presence settle delay
-      description: Optional delay to avoid switching schedules during brief GPS/presence flapping.
+      description: >
+        Delay before switching schedules. Useful to avoid GPS or tracker flapping.
       default:
         hours: 0
         minutes: 0
@@ -64,16 +93,20 @@ blueprint:
       selector:
         duration:
 
-    present_extra_actions:
-      name: Extra actions when someone is home
-      description: Optional. For example, call your Mitsubishi sync script after enabling comfort schedules.
+    comfort_extra_actions:
+      name: Extra actions when comfort schedules are enabled
+      description: >
+        Optional. For example, call your Mitsubishi group HVAC sync script.
+        The variable climate_entity is available inside templates.
       default: []
       selector:
         action:
 
     away_extra_actions:
-      name: Extra actions when nobody is home
-      description: Optional. For example, call your Mitsubishi sync script after enabling away schedules.
+      name: Extra actions when away schedules are enabled
+      description: >
+        Optional. For example, call your Mitsubishi group HVAC sync script.
+        The variable climate_entity is available inside templates.
       default: []
       selector:
         action:
@@ -81,29 +114,56 @@ blueprint:
 mode: restart
 
 variables:
-  home_zone_entity: !input home_zone
-  minimum_people_home_value: !input minimum_people_home
+  climate_entity: !input climate_unit
+  people_entities: !input people
+  presence_rule_value: !input presence_rule
   turn_off_inactive: !input turn_off_inactive_schedules
+  require_climate: !input require_climate_available
+
+  selected_people_count: >-
+    {{ expand(people_entities) | list | count }}
+
+  home_people_count: >-
+    {{ expand(people_entities)
+       | selectattr('state', 'eq', 'home')
+       | list
+       | count }}
+
+  climate_is_available: >-
+    {{ states(climate_entity) not in ['unknown', 'unavailable', 'none', ''] }}
+
+  use_comfort_schedules: >-
+    {% if presence_rule_value == 'all_selected_people_home' %}
+      {{ selected_people_count | int(0) > 0 and home_people_count | int(0) == selected_people_count | int(0) }}
+    {% else %}
+      {{ home_people_count | int(0) > 0 }}
+    {% endif %}
 
 triggers:
   - trigger: homeassistant
     event: start
 
   - trigger: state
-    entity_id: !input home_zone
+    entity_id: !input people
+
+  - trigger: state
+    entity_id: !input climate_unit
 
 actions:
   - delay: !input settle_delay
 
+  - condition: template
+    value_template: >-
+      {{ not require_climate | bool(false) or climate_is_available | bool(false) }}
+
   - choose:
       - conditions:
           - condition: template
-            value_template: >-
-              {{ (states(home_zone_entity) | int(0)) >= (minimum_people_home_value | int(1)) }}
+            value_template: "{{ use_comfort_schedules | bool(false) }}"
         sequence:
           - if:
               - condition: template
-                value_template: "{{ turn_off_inactive }}"
+                value_template: "{{ turn_off_inactive | bool(false) }}"
             then:
               - action: switch.turn_off
                 target: !input away_schedules
@@ -111,12 +171,12 @@ actions:
           - action: switch.turn_on
             target: !input comfort_schedules
 
-          - sequence: !input present_extra_actions
+          - sequence: !input comfort_extra_actions
 
     default:
       - if:
           - condition: template
-            value_template: "{{ turn_off_inactive }}"
+            value_template: "{{ turn_off_inactive | bool(false) }}"
         then:
           - action: switch.turn_off
             target: !input comfort_schedules
