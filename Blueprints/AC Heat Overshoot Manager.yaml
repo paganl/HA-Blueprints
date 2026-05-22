@@ -19,7 +19,7 @@ blueprint:
 
     Designed for Home Assistant 2026.5+ using actions/triggers syntax.
 
-    Version: 202605-04
+    Version: 202605-06
     
   domain: automation
   author: P Gale & ChatGPT
