@@ -9,7 +9,7 @@ blueprint:
 
     Temperature values must use the same unit as your Home Assistant system.
     Defaults are Celsius-oriented
-    Version: 202605-01
+    Version: 202605-02
 
   domain: automation
   author: P Gale & ChatGPT
@@ -61,18 +61,6 @@ blueprint:
         number:
           min: 10
           max: 40
-          step: 0.5
-          mode: box
-          unit_of_measurement: "°"
-
-    cooling_target_temperature:
-      name: Cooling target temperature
-      description: Target temperature to set when switching to cool mode.
-      default: 24
-      selector:
-        number:
-          min: 10
-          max: 35
           step: 0.5
           mode: box
           unit_of_measurement: "°"
@@ -157,7 +145,16 @@ variables:
 
   heat_overshoot_delta: !input heat_overshoot_delta
   cool_max_temp: !input cool_max_temp
-  cooling_target_temperature: !input cooling_target_temperature
+  cooling_target_temperature: >-
+    {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
+    {% set current = state_attr(ac, 'temperature') | float(none) %}
+    {% if high is not none %}
+      {{ high }}
+    {% elif current is not none %}
+      {{ current }}
+    {% else %}
+      {{ cool_max_temp | float }}
+    {% endif %}
 
   outside_cold_temp: !input outside_cold_temp
   outside_mild_temp: !input outside_mild_temp
