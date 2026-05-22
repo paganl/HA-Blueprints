@@ -193,7 +193,7 @@ actions:
 
       heat_target_temp: >-
         {% set low = state_attr(ac, 'target_temp_low') | float(none) %}
-        {% set target = state_attr(ac, 'temperature') | float(none) %}
+        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
         {% if low is not none %}
           {{ low }}
         {% elif target is not none %}
@@ -204,7 +204,7 @@ actions:
 
       cool_low_temp: >-
         {% set low = state_attr(ac, 'target_temp_low') | float(none) %}
-        {% set target = state_attr(ac, 'temperature') | float(none) %}
+        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
         {% if low is not none %}
           {{ low }}
         {% elif target is not none %}
@@ -215,7 +215,7 @@ actions:
 
       cool_high_temp: >-
         {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
-        {% set target = state_attr(ac, 'temperature') | float(none) %}
+        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
         {% if high is not none %}
           {{ high }}
         {% elif target is not none %}
@@ -254,7 +254,7 @@ actions:
           - variables:
               cool_target_now: >-
                 {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
-                {% set target = state_attr(ac, 'temperature') | float(none) %}
+                {% set target = state_attr(ac, 'current_temperature') | float(none) %}
                 {% if high is not none %}
                   {{ high }}
                 {% elif target is not none %}
@@ -310,7 +310,7 @@ actions:
                   - variables:
                       cool_target_now: >-
                         {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
-                        {% set target = state_attr(ac, 'temperature') | float(none) %}
+                        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
                         {% if high is not none %}
                           {{ high }}
                         {% elif target is not none %}
@@ -335,7 +335,7 @@ actions:
                   - variables:
                       heat_target_now: >-
                         {% set low = state_attr(ac, 'target_temp_low') | float(none) %}
-                        {% set target = state_attr(ac, 'temperature') | float(none) %}
+                        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
                         {% if low is not none %}
                           {{ low }}
                         {% elif target is not none %}
@@ -382,7 +382,7 @@ actions:
                   - variables:
                       cool_target_now: >-
                         {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
-                        {% set target = state_attr(ac, 'temperature') | float(none) %}
+                        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
                         {% if high is not none %}
                           {{ high }}
                         {% elif target is not none %}
