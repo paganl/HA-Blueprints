@@ -1,0 +1,257 @@
+blueprint:
+  name: A/C Heat Overshoot Manager
+  description: >
+    Monitors an A/C climate entity. If it is in heat mode and the room
+    temperature is at least X degrees above the target temperature, it turns
+    the unit off for a delay based on outside temperature. If the room and
+    outside temperatures are both above the cooling max temperature, it switches
+    the unit to cooling instead.
+
+    Temperature values must use the same unit as your Home Assistant system.
+    Defaults are Celsius-oriented
+    Version: 202605-03
+
+  domain: automation
+  author: P Gale & ChatGPT
+  homeassistant:
+    min_version: 2026.5.0
+
+  input:
+    climate_entity:
+      name: A/C climate entity
+      selector:
+        entity:
+          filter:
+            - domain: climate
+
+    room_temperature_sensor:
+      name: Room temperature sensor
+      description: Temperature sensor for the room controlled by this A/C.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+
+    outside_temperature_sensor:
+      name: Outside temperature sensor
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+
+    heat_overshoot_delta:
+      name: Heat overshoot amount
+      description: Turn heating off when room temperature is this many degrees above the climate target.
+      default: 2
+      selector:
+        number:
+          min: 0.5
+          max: 10
+          step: 0.1
+          mode: box
+          unit_of_measurement: "°"
+
+    cool_max_temp:
+      name: Cooling max temperature
+      description: If room and outside temperature are both at or above this, switch to cooling.
+      default: 26
+      selector:
+        number:
+          min: 10
+          max: 40
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°"
+
+    outside_cold_temp:
+      name: Outside cold threshold
+      description: Below this outside temperature, use the short off delay.
+      default: 5
+      selector:
+        number:
+          min: -30
+          max: 40
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°"
+
+    outside_mild_temp:
+      name: Outside mild threshold
+      description: Between cold and mild threshold, use the medium off delay. At or above this, use the long delay.
+      default: 15
+      selector:
+        number:
+          min: -30
+          max: 40
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°"
+
+    off_minutes_cold:
+      name: Off minutes when outside is cold
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+          mode: box
+          unit_of_measurement: min
+
+    off_minutes_mild:
+      name: Off minutes when outside is mild
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+          mode: box
+          unit_of_measurement: min
+
+    off_minutes_warm:
+      name: Off minutes when outside is warm
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+          mode: box
+          unit_of_measurement: min
+
+mode: single
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input room_temperature_sensor
+
+  - trigger: state
+    entity_id: !input outside_temperature_sensor
+
+  - trigger: state
+    entity_id: !input climate_entity
+
+  - trigger: time_pattern
+    minutes: "/5"
+
+variables:
+  : !input climate_entity
+  room_sensor: !input room_temperature_sensor
+  outside_sensor: !input outside_temperature_sensor
+
+  heat_overshoot_delta: !input heat_overshoot_delta
+  cool_max_temp: !input cool_max_temp
+  cooling_target_temperature: >-
+    {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
+    {% set current = state_attr(ac, 'current_temperature') | float(none) %}
+    {% if high is not none %}
+      {{ high }}
+    {% elif current is not none %}
+      {{ current }}
+    {% else %}
+      {{ cool_max_temp | float }}
+    {% endif %}
+
+  outside_cold_temp: !input outside_cold_temp
+  outside_mild_temp: !input outside_mild_temp
+  off_minutes_cold: !input off_minutes_cold
+  off_minutes_mild: !input off_minutes_mild
+  off_minutes_warm: !input off_minutes_warm
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{
+        (states(room_sensor) | float(none)) is not none
+        and (states(outside_sensor) | float(none)) is not none
+        and (state_attr(ac, 'current_temperature') | float(none)) is not none
+      }}
+
+actions:
+  - variables:
+      target_temp_now: "{{ state_attr(ac, 'current_temperature') | float }}"
+      off_minutes_now: >-
+        {% set out = states(outside_sensor) | float %}
+        {% if out < (outside_cold_temp | float) %}
+          {{ off_minutes_cold | int }}
+        {% elif out < (outside_mild_temp | float) %}
+          {{ off_minutes_mild | int }}
+        {% else %}
+          {{ off_minutes_warm | int }}
+        {% endif %}
+
+  - choose:
+      - alias: Switch from heat to cool when room and outside are above cooling max
+        conditions:
+          - condition: template
+            value_template: >-
+              {% set room = states(room_sensor) | float %}
+              {% set outside = states(outside_sensor) | float %}
+              {{
+                is_state(ac, 'heat')
+                and room >= (cool_max_temp | float)
+                and outside >= (cool_max_temp | float)
+              }}
+        sequence:
+          - action: climate.set_temperature
+            target:
+              entity_id: !input climate_entity
+            data:
+              hvac_mode: cool
+              temperature: "{{ cooling_target_temperature | float }}"
+
+      - alias: Turn heat off when room is above target by overshoot amount
+        conditions:
+          - condition: template
+            value_template: >-
+              {% set room = states(room_sensor) | float %}
+              {% set target = state_attr(ac, 'current_temperature') | float %}
+              {{
+                is_state(ac, 'heat')
+                and room >= (target + (heat_overshoot_delta | float))
+              }}
+        sequence:
+          - action: climate.turn_off
+            target:
+              entity_id: !input climate_entity
+
+          - delay:
+              minutes: "{{ off_minutes_now | int }}"
+
+          - choose:
+              - alias: After delay, switch to cooling if still too warm inside and outside
+                conditions:
+                  - condition: template
+                    value_template: >-
+                      {% set room = states(room_sensor) | float(none) %}
+                      {% set outside = states(outside_sensor) | float(none) %}
+                      {{
+                        is_state(ac, 'off')
+                        and room is not none
+                        and outside is not none
+                        and room >= (cool_max_temp | float)
+                        and outside >= (cool_max_temp | float)
+                      }}
+                sequence:
+                  - action: climate.set_temperature
+                    target:
+                      entity_id: !input climate_entity
+                    data:
+                      hvac_mode: cool
+                      temperature: "{{ cooling_target_temperature | float }}"
+
+              - alias: After delay, return to heat if still off
+                conditions:
+                  - condition: template
+                    value_template: "{{ is_state(ac, 'off') }}"
+                sequence:
+                  - action: climate.set_temperature
+                    target:
+                      entity_id: !input climate_entity
+                    data:
+                      hvac_mode: heat
+                      temperature: "{{ target_temp_now | float }}"
