@@ -1,28 +1,30 @@
 blueprint:
-  name: A/C Overshoot and Undershoot Sleep Manager
+  name: A/C Dual Setpoint Sleep Manager
   description: >
-    Monitors a climate entity using its current_temperature attribute.
+    Sleep manager for dual-setpoint climate entities such as Mitsubishi CN105
+    devices that expose current_temperature, target_temp_low, and
+    target_temp_high, but no temperature attribute.
 
-    In heat mode:
-      If current_temperature is above the heating setpoint by the configured
-      overshoot amount, the unit is turned off for a delay based on outside
-      temperature.
+    Heat mode:
+      If current_temperature is at least X degrees above target_temp_low,
+      turn the unit off for a calculated sleep period, then restore heat.
 
-    In cool mode:
-      If current_temperature is below the low setpoint by the configured
-      undershoot amount, the unit is turned off for a delay based on outside
-      temperature.
+    Cool mode:
+      If current_temperature is at least X degrees below target_temp_low,
+      turn the unit off for a calculated sleep period, then restore cool.
 
-    If the unit is in heat mode and both the current temperature and outside
-    temperature are above the cooling switch temperature, the unit switches
-    to cooling instead of sleeping.
+    Heat to cool:
+      If the unit is in heat mode and both current_temperature and outside
+      temperature are at or above the cooling switch temperature, switch to
+      cool mode.
 
-    Designed for Home Assistant 2026.5+ using actions/triggers syntax.
+    This blueprint uses climate.set_hvac_mode to preserve the device's existing
+    target_temp_low and target_temp_high values.
 
-    Version: 202605-06
+    Version: 202605-07
     
   domain: automation
-  author: P Gale & ChatGPT
+  author: ChatGPT
   homeassistant:
     min_version: 2026.5.0
 
@@ -45,8 +47,8 @@ blueprint:
     heat_overshoot_delta:
       name: Heat overshoot amount
       description: >
-        In heat mode, turn the unit off when current_temperature is this many
-        degrees above the heating setpoint.
+        In heat mode, sleep when current_temperature is this many degrees
+        above target_temp_low.
       default: 2
       selector:
         number:
@@ -59,8 +61,8 @@ blueprint:
     cool_undershoot_delta:
       name: Cool undershoot amount
       description: >
-        In cool mode, turn the unit off when current_temperature is this many
-        degrees below target_temp_low.
+        In cool mode, sleep when current_temperature is this many degrees
+        below target_temp_low.
       default: 2
       selector:
         number:
@@ -70,7 +72,7 @@ blueprint:
           mode: box
           unit_of_measurement: "°"
 
-    cool_max_temp:
+    cool_switch_temp:
       name: Cooling switch temperature
       description: >
         If the unit is heating and both current_temperature and outside
@@ -86,7 +88,7 @@ blueprint:
 
     outside_cold_temp:
       name: Outside cold threshold
-      description: Below this outside temperature, use the short sleep time.
+      description: Below this outside temperature, use the cold sleep time.
       default: 5
       selector:
         number:
@@ -99,7 +101,7 @@ blueprint:
     outside_mild_temp:
       name: Outside mild threshold
       description: >
-        Between cold and mild threshold, use the medium sleep time.
+        Between the cold and mild thresholds, use the mild sleep time.
         At or above this value, use the warm sleep time.
       default: 15
       selector:
@@ -112,7 +114,7 @@ blueprint:
 
     off_minutes_cold:
       name: Sleep minutes when outside is cold
-      default: 5
+      default: 10
       selector:
         number:
           min: 1
@@ -123,7 +125,7 @@ blueprint:
 
     off_minutes_mild:
       name: Sleep minutes when outside is mild
-      default: 10
+      default: 20
       selector:
         number:
           min: 1
@@ -134,11 +136,11 @@ blueprint:
 
     off_minutes_warm:
       name: Sleep minutes when outside is warm
-      default: 20
+      default: 60
       selector:
         number:
           min: 1
-          max: 180
+          max: 240
           step: 1
           mode: box
           unit_of_measurement: min
@@ -153,10 +155,6 @@ triggers:
   - trigger: state
     entity_id: !input climate_entity
     attribute: current_temperature
-
-  - trigger: state
-    entity_id: !input climate_entity
-    attribute: temperature
 
   - trigger: state
     entity_id: !input climate_entity
@@ -178,7 +176,7 @@ variables:
 
   heat_overshoot_delta: !input heat_overshoot_delta
   cool_undershoot_delta: !input cool_undershoot_delta
-  cool_max_temp: !input cool_max_temp
+  cool_switch_temp: !input cool_switch_temp
 
   outside_cold_temp: !input outside_cold_temp
   outside_mild_temp: !input outside_mild_temp
@@ -189,40 +187,9 @@ variables:
 actions:
   - variables:
       current_temp: "{{ state_attr(ac, 'current_temperature') | float(none) }}"
+      low_target_temp: "{{ state_attr(ac, 'target_temp_low') | float(none) }}"
+      high_target_temp: "{{ state_attr(ac, 'target_temp_high') | float(none) }}"
       outside_temp: "{{ states(outside_sensor) | float(none) }}"
-
-      heat_target_temp: >-
-        {% set low = state_attr(ac, 'target_temp_low') | float(none) %}
-        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
-        {% if low is not none %}
-          {{ low }}
-        {% elif target is not none %}
-          {{ target }}
-        {% else %}
-          {{ none }}
-        {% endif %}
-
-      cool_low_temp: >-
-        {% set low = state_attr(ac, 'target_temp_low') | float(none) %}
-        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
-        {% if low is not none %}
-          {{ low }}
-        {% elif target is not none %}
-          {{ target }}
-        {% else %}
-          {{ none }}
-        {% endif %}
-
-      cool_high_temp: >-
-        {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
-        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
-        {% if high is not none %}
-          {{ high }}
-        {% elif target is not none %}
-          {{ target }}
-        {% else %}
-          {{ cool_max_temp | float }}
-        {% endif %}
 
       off_minutes_now: >-
         {% set out = states(outside_sensor) | float(none) %}
@@ -237,7 +204,7 @@ actions:
         {% endif %}
 
   - choose:
-      - alias: Heat mode - switch to cooling when both inside and outside are hot
+      - alias: Heat mode - switch to cooling when inside and outside are hot
         conditions:
           - condition: template
             value_template: >-
@@ -247,41 +214,28 @@ actions:
                 is_state(ac, 'heat')
                 and room is not none
                 and outside is not none
-                and room >= (cool_max_temp | float)
-                and outside >= (cool_max_temp | float)
+                and room >= (cool_switch_temp | float)
+                and outside >= (cool_switch_temp | float)
               }}
         sequence:
-          - variables:
-              cool_target_now: >-
-                {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
-                {% set target = state_attr(ac, 'current_temperature') | float(none) %}
-                {% if high is not none %}
-                  {{ high }}
-                {% elif target is not none %}
-                  {{ target }}
-                {% else %}
-                  {{ cool_max_temp | float }}
-                {% endif %}
-
-          - action: climate.set_temperature
+          - action: climate.set_hvac_mode
             continue_on_error: true
             target:
               entity_id: !input climate_entity
             data:
               hvac_mode: cool
-              temperature: "{{ cool_target_now | float }}"
 
-      - alias: Heat mode - sleep when current temperature is above heat target
+      - alias: Heat mode - sleep when current temperature is above low target
         conditions:
           - condition: template
             value_template: >-
               {% set room = current_temp | float(none) %}
-              {% set heat_target = heat_target_temp | float(none) %}
+              {% set low = low_target_temp | float(none) %}
               {{
                 is_state(ac, 'heat')
                 and room is not none
-                and heat_target is not none
-                and room >= (heat_target + (heat_overshoot_delta | float))
+                and low is not none
+                and room >= (low + (heat_overshoot_delta | float))
               }}
         sequence:
           - action: climate.turn_off
@@ -303,66 +257,40 @@ actions:
                         is_state(ac, 'off')
                         and room is not none
                         and outside is not none
-                        and room >= (cool_max_temp | float)
-                        and outside >= (cool_max_temp | float)
+                        and room >= (cool_switch_temp | float)
+                        and outside >= (cool_switch_temp | float)
                       }}
                 sequence:
-                  - variables:
-                      cool_target_now: >-
-                        {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
-                        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
-                        {% if high is not none %}
-                          {{ high }}
-                        {% elif target is not none %}
-                          {{ target }}
-                        {% else %}
-                          {{ cool_max_temp | float }}
-                        {% endif %}
-
-                  - action: climate.set_temperature
+                  - action: climate.set_hvac_mode
                     continue_on_error: true
                     target:
                       entity_id: !input climate_entity
                     data:
                       hvac_mode: cool
-                      temperature: "{{ cool_target_now | float }}"
 
               - alias: After heat sleep, restore heat if still off
                 conditions:
                   - condition: template
                     value_template: "{{ is_state(ac, 'off') }}"
                 sequence:
-                  - variables:
-                      heat_target_now: >-
-                        {% set low = state_attr(ac, 'target_temp_low') | float(none) %}
-                        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
-                        {% if low is not none %}
-                          {{ low }}
-                        {% elif target is not none %}
-                          {{ target }}
-                        {% else %}
-                          {{ heat_target_temp | float }}
-                        {% endif %}
-
-                  - action: climate.set_temperature
+                  - action: climate.set_hvac_mode
                     continue_on_error: true
                     target:
                       entity_id: !input climate_entity
                     data:
                       hvac_mode: heat
-                      temperature: "{{ heat_target_now | float }}"
 
       - alias: Cool mode - sleep when current temperature is below low target
         conditions:
           - condition: template
             value_template: >-
               {% set room = current_temp | float(none) %}
-              {% set cool_low = cool_low_temp | float(none) %}
+              {% set low = low_target_temp | float(none) %}
               {{
                 is_state(ac, 'cool')
                 and room is not none
-                and cool_low is not none
-                and room <= (cool_low - (cool_undershoot_delta | float))
+                and low is not none
+                and room <= (low - (cool_undershoot_delta | float))
               }}
         sequence:
           - action: climate.turn_off
@@ -379,22 +307,9 @@ actions:
                   - condition: template
                     value_template: "{{ is_state(ac, 'off') }}"
                 sequence:
-                  - variables:
-                      cool_target_now: >-
-                        {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
-                        {% set target = state_attr(ac, 'current_temperature') | float(none) %}
-                        {% if high is not none %}
-                          {{ high }}
-                        {% elif target is not none %}
-                          {{ target }}
-                        {% else %}
-                          {{ cool_high_temp | float }}
-                        {% endif %}
-
-                  - action: climate.set_temperature
+                  - action: climate.set_hvac_mode
                     continue_on_error: true
                     target:
                       entity_id: !input climate_entity
                     data:
                       hvac_mode: cool
-                      temperature: "{{ cool_target_now | float }}"
