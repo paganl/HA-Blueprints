@@ -9,7 +9,7 @@ blueprint:
 
     Temperature values must use the same unit as your Home Assistant system.
     Defaults are Celsius-oriented
-    Version: 202605-02
+    Version: 202605-03
 
   domain: automation
   author: P Gale & ChatGPT
@@ -139,7 +139,7 @@ triggers:
     minutes: "/5"
 
 variables:
-  ac: !input climate_entity
+  : !input climate_entity
   room_sensor: !input room_temperature_sensor
   outside_sensor: !input outside_temperature_sensor
 
@@ -147,7 +147,7 @@ variables:
   cool_max_temp: !input cool_max_temp
   cooling_target_temperature: >-
     {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
-    {% set current = state_attr(ac, 'temperature') | float(none) %}
+    {% set current = state_attr(ac, 'current_temperature') | float(none) %}
     {% if high is not none %}
       {{ high }}
     {% elif current is not none %}
@@ -168,12 +168,12 @@ conditions:
       {{
         (states(room_sensor) | float(none)) is not none
         and (states(outside_sensor) | float(none)) is not none
-        and (state_attr(ac, 'temperature') | float(none)) is not none
+        and (state_attr(ac, 'current_temperature') | float(none)) is not none
       }}
 
 actions:
   - variables:
-      target_temp_now: "{{ state_attr(ac, 'temperature') | float }}"
+      target_temp_now: "{{ state_attr(ac, 'current_temperature') | float }}"
       off_minutes_now: >-
         {% set out = states(outside_sensor) | float %}
         {% if out < (outside_cold_temp | float) %}
@@ -209,7 +209,7 @@ actions:
           - condition: template
             value_template: >-
               {% set room = states(room_sensor) | float %}
-              {% set target = state_attr(ac, 'temperature') | float %}
+              {% set target = state_attr(ac, 'current_temperature') | float %}
               {{
                 is_state(ac, 'heat')
                 and room >= (target + (heat_overshoot_delta | float))
