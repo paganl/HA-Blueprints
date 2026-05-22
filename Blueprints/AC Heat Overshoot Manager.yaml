@@ -21,7 +21,7 @@ blueprint:
     This blueprint uses climate.set_hvac_mode to preserve the device's existing
     target_temp_low and target_temp_high values.
 
-    Version: 202605-07
+    Version: 202605-08
     
   domain: automation
   author: ChatGPT
@@ -279,28 +279,28 @@ actions:
                       entity_id: !input climate_entity
                     data:
                       hvac_mode: heat
-
-      - alias: Cool mode - sleep when current temperature is below low target
+                      
+      - alias: Cool mode - sleep when current temperature is below high target
         conditions:
           - condition: template
             value_template: >-
               {% set room = current_temp | float(none) %}
-              {% set low = low_target_temp | float(none) %}
+              {% set high = high_target_temp | float(none) %}
               {{
                 is_state(ac, 'cool')
                 and room is not none
-                and low is not none
-                and room <= (low - (cool_undershoot_delta | float))
+                and high is not none
+                and room <= (high - (cool_undershoot_delta | float))
               }}
         sequence:
           - action: climate.turn_off
             continue_on_error: true
             target:
-              entity_id: !input climate_entity
-
+              entity_id: climate.mitsubishi_ac_office_mitsubishi_ac_office_climate
+      
           - delay:
               minutes: "{{ off_minutes_now | int }}"
-
+      
           - choose:
               - alias: After cool sleep, restore cool if still off
                 conditions:
@@ -310,6 +310,6 @@ actions:
                   - action: climate.set_hvac_mode
                     continue_on_error: true
                     target:
-                      entity_id: !input climate_entity
+                      entity_id: climate.mitsubishi_ac_office_mitsubishi_ac_office_climate
                     data:
                       hvac_mode: cool
