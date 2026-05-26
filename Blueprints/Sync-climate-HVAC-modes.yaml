@@ -1,0 +1,136 @@
+blueprint:
+  name: Sync climate HVAC modes with default mode helper
+  description: >
+    Keeps selected climate entities in the same active HVAC mode.
+    Turning a climate entity off is ignored, so the default/group HVAC mode
+    helper keeps its previous heat/cool value. The helper is only set when the
+    selected option exists in the input_select options.
+
+    The input_select helper should have options matching the climate HVAC mode
+    states you want to store, for example: heat and cool.
+
+    Version 202605-01
+    
+  domain: automation
+  author: P Gale & ChatGPT
+  homeassistant:
+    min_version: "2024.8.0"
+
+  input:
+    climate_entities:
+      name: Climate entities to sync
+      description: >
+        Select two or more climate entities that should share the same active
+        HVAC mode. Entities that are off are not turned on by this blueprint.
+      selector:
+        entity:
+          multiple: true
+          reorder: true
+          filter:
+            - domain: climate
+
+    group_hvac_mode_helper:
+      name: Default/group HVAC mode helper
+      description: >
+        Input select helper that stores the default active HVAC mode.
+        Its options must match the climate HVAC mode values you want to store,
+        for example: heat and cool. This blueprint never writes off to it.
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+
+mode: single
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input climate_entities
+
+variables:
+  climates: !input climate_entities
+  group_hvac_helper: !input group_hvac_mode_helper
+
+  source: "{{ trigger.entity_id }}"
+  peers: "{{ climates | reject('eq', source) | list }}"
+
+  from_mode: "{{ trigger.from_state.state if trigger.from_state is not none else none }}"
+  to_mode: "{{ trigger.to_state.state if trigger.to_state is not none else none }}"
+
+  inactive_modes:
+    - "off"
+    - "unknown"
+    - "unavailable"
+
+  helper_options: "{{ state_attr(group_hvac_helper, 'options') | default([], true) }}"
+  source_supported_modes: "{{ state_attr(source, 'hvac_modes') | default([], true) }}"
+
+  active_peer_modes: >-
+    {{ expand(peers)
+       | map(attribute='state')
+       | reject('in', inactive_modes)
+       | unique
+       | list }}
+
+  target_mode: >-
+    {{ active_peer_modes[0]
+       if from_mode == 'off'
+          and to_mode not in inactive_modes
+          and (active_peer_modes | count) == 1
+          and to_mode != active_peer_modes[0]
+          and active_peer_modes[0] in source_supported_modes
+       else to_mode }}
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.to_state is not none
+         and to_mode not in inactive_modes
+         and target_mode not in inactive_modes }}
+
+actions:
+  - choose:
+      - alias: "Triggered unit was turned on while peers already have one active mode"
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ from_mode == 'off'
+                 and (active_peer_modes | count) == 1
+                 and target_mode == active_peer_modes[0]
+                 and to_mode != target_mode }}
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: "{{ source }}"
+            data:
+              hvac_mode: "{{ target_mode }}"
+
+    default:
+      - repeat:
+          for_each: "{{ peers }}"
+          sequence:
+            - variables:
+                peer_supported_modes: "{{ state_attr(repeat.item, 'hvac_modes') | default([], true) }}"
+
+            - condition: template
+              value_template: >-
+                {{ states(repeat.item) not in inactive_modes
+                   and states(repeat.item) != to_mode
+                   and to_mode in peer_supported_modes }}
+
+            - action: climate.set_hvac_mode
+              target:
+                entity_id: "{{ repeat.item }}"
+              data:
+                hvac_mode: "{{ to_mode }}"
+
+  - condition: template
+    value_template: >-
+      {{ target_mode in helper_options
+         and states(group_hvac_helper) != target_mode }}
+
+  - action: input_select.select_option
+    target:
+      entity_id: "{{ group_hvac_helper }}"
+    data:
+      option: "{{ target_mode }}"
