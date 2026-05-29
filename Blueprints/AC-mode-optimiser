@@ -4,13 +4,13 @@ blueprint:
     Non-blocking energy saver for one A/C unit controlled by a shared group
     HVAC mode helper.
 
-    This blueprint does not decide the group HVAC mode. It assumes another
-    automation manages a group helper such as input_select.group_a_hvac_mode
-    or input_select.group_b_hvac_mode.
+    This blueprint does not decide the group HVAC mode. This is set by the units HVACs 
+    group sync automation, and stored in the helper variable input_select.group_a_hvac_mode
+    (2 units) or input_select.group_b_hvac_mode (3 units). 
 
-    The unit can temporarily leave the group by turning itself off. Since your
-    group sync automation ignores OFF. This allows individual units to sleep
-    without fighting the group sync.
+    The unit can temporarily leave the group by turning itself off. The groups sync 
+    automation ignores OFF, allowing individual units to sleep without fighting 
+    the group sync.
 
     Designed for Mitsubishi CN105-style dual-setpoint climate entities exposing:
       - current_temperature
