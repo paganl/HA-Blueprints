@@ -1,0 +1,530 @@
+blueprint:
+  name: A/C Group HVAC Hysteresis Controller
+  description: >
+    Group-level HVAC mode hysteresis controller.
+
+    This blueprint decides whether one group of A/C units should be in heat or
+    cool mode. It updates a group HVAC input_select helper and, if at least one
+    unit in the group is currently ON, switches one real climate entity to the
+    new HVAC mode so your existing sync automation can propagate the change.
+
+    It does not manage OFF as an HVAC mode. OFF is treated as an individual unit
+    not currently participating.
+
+    Designed for Mitsubishi CN105-style dual-setpoint climate entities exposing:
+      - current_temperature
+      - target_temp_low
+      - target_temp_high
+
+    COOL vote:
+      current_temperature >= target_temp_high + cool_switch_delta
+
+    HEAT vote:
+      current_temperature <= target_temp_low - heat_switch_delta
+
+  Version: 202605-01
+
+  domain: automation
+  author: Paul Gale
+  homeassistant:
+    min_version: 2026.5.0
+
+  input:
+    group_climate_entities:
+      name: Group climate entities
+      description: >
+        Select all climate entities that belong to this group.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: climate
+
+    group_hvac_mode_helper:
+      name: Group HVAC mode helper
+      description: >
+        input_select helper that stores the desired group mode.
+        Example: input_select.group_a_hvac_mode or input_select.group_b_hvac_mode.
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+
+    outside_temperature_sensor:
+      name: Outside temperature sensor
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+
+    thermal_temperature_sensor:
+      name: Thermal mass / outside average temperature sensor
+      description: >
+        Optional-style input. Use a moving-average outside temperature sensor
+        here if you have one. If not, select the same entity as the normal
+        outside temperature sensor.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+
+    heat_option:
+      name: Exact HEAT option text
+      description: >
+        Must exactly match the HEAT option in the input_select helper.
+      default: heat
+      selector:
+        text:
+
+    cool_option:
+      name: Exact COOL option text
+      description: >
+        Must exactly match the COOL option in the input_select helper.
+      default: cool
+      selector:
+        text:
+
+    enable_heat_to_cool:
+      name: Enable heat → cool switching
+      default: true
+      selector:
+        boolean:
+
+    enable_cool_to_heat:
+      name: Enable cool → heat switching
+      default: false
+      selector:
+        boolean:
+
+    cool_switch_delta:
+      name: Cool switch hysteresis delta
+      description: >
+        A room votes for cooling when current_temperature is this many degrees
+        above target_temp_high.
+      default: 0.5
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.1
+          mode: box
+          unit_of_measurement: "°"
+
+    heat_switch_delta:
+      name: Heat switch hysteresis delta
+      description: >
+        A room votes for heating when current_temperature is this many degrees
+        below target_temp_low.
+      default: 0.5
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.1
+          mode: box
+          unit_of_measurement: "°"
+
+    required_cool_votes:
+      name: Required COOL votes
+      description: >
+        Number of selected climate entities that must vote for cooling before
+        switching the group to cool.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 20
+          step: 1
+          mode: box
+
+    required_heat_votes:
+      name: Required HEAT votes
+      description: >
+        Number of selected climate entities that must vote for heating before
+        switching the group to heat.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 20
+          step: 1
+          mode: box
+
+    minimum_available_climates:
+      name: Minimum valid climate entities
+      description: >
+        Do not switch mode unless at least this many climate entities have valid
+        current_temperature, target_temp_low, and target_temp_high attributes.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 20
+          step: 1
+          mode: box
+
+    outside_cooling_allowed_temp:
+      name: Outside temperature required for cooling
+      description: >
+        Heat → cool is allowed when the current outside temperature is at or
+        above this value OR the thermal/average sensor is above its cooling value.
+      default: 20
+      selector:
+        number:
+          min: -20
+          max: 50
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°"
+
+    thermal_cooling_allowed_temp:
+      name: Thermal average temperature required for cooling
+      description: >
+        Heat → cool is allowed if the thermal/average sensor is at or above this value.
+      default: 22
+      selector:
+        number:
+          min: -20
+          max: 50
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°"
+
+    outside_heating_allowed_temp:
+      name: Outside temperature required for heating
+      description: >
+        Cool → heat is allowed only when the current outside temperature is at
+        or below this value.
+      default: 16
+      selector:
+        number:
+          min: -30
+          max: 40
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°"
+
+    thermal_heating_allowed_temp:
+      name: Thermal average temperature required for heating
+      description: >
+        Cool → heat is allowed only when the thermal/average sensor is at or below this value.
+      default: 17
+      selector:
+        number:
+          min: -30
+          max: 40
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°"
+
+    minimum_mode_runtime_minutes:
+      name: Minimum mode runtime
+      description: >
+        Prevents rapid heat/cool oscillation. The current group helper value
+        must have been active for at least this many minutes before switching.
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 240
+          step: 1
+          mode: box
+          unit_of_measurement: min
+
+mode: single
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input group_climate_entities
+    id: climate_state_changed
+
+  - trigger: state
+    entity_id: !input group_climate_entities
+    attribute: current_temperature
+    id: current_temperature_changed
+
+  - trigger: state
+    entity_id: !input group_climate_entities
+    attribute: target_temp_low
+    id: target_low_changed
+
+  - trigger: state
+    entity_id: !input group_climate_entities
+    attribute: target_temp_high
+    id: target_high_changed
+
+  - trigger: state
+    entity_id: !input outside_temperature_sensor
+    id: outside_temperature_changed
+
+  - trigger: state
+    entity_id: !input thermal_temperature_sensor
+    id: thermal_temperature_changed
+
+  - trigger: state
+    entity_id: !input group_hvac_mode_helper
+    id: group_mode_changed
+
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+
+  - trigger: time_pattern
+    minutes: "/5"
+    id: periodic_check
+
+variables:
+  group_climates: !input group_climate_entities
+  group_hvac_mode_helper: !input group_hvac_mode_helper
+  outside_sensor: !input outside_temperature_sensor
+  thermal_sensor: !input thermal_temperature_sensor
+
+  heat_option: !input heat_option
+  cool_option: !input cool_option
+
+  enable_heat_to_cool: !input enable_heat_to_cool
+  enable_cool_to_heat: !input enable_cool_to_heat
+
+  cool_switch_delta: !input cool_switch_delta
+  heat_switch_delta: !input heat_switch_delta
+
+  required_cool_votes: !input required_cool_votes
+  required_heat_votes: !input required_heat_votes
+  minimum_available_climates: !input minimum_available_climates
+
+  outside_cooling_allowed_temp: !input outside_cooling_allowed_temp
+  thermal_cooling_allowed_temp: !input thermal_cooling_allowed_temp
+  outside_heating_allowed_temp: !input outside_heating_allowed_temp
+  thermal_heating_allowed_temp: !input thermal_heating_allowed_temp
+
+  minimum_mode_runtime_minutes: !input minimum_mode_runtime_minutes
+
+actions:
+  - variables:
+      trigger_id: >-
+        {% if trigger is defined and trigger.id is defined %}
+          {{ trigger.id }}
+        {% else %}
+          manual
+        {% endif %}
+
+      outside_temp: "{{ states(outside_sensor) | float(none) }}"
+      thermal_temp: "{{ states(thermal_sensor) | float(none) }}"
+
+      raw_group_mode: "{{ states(group_hvac_mode_helper) }}"
+
+      group_mode: >-
+        {% set mode = states(group_hvac_mode_helper) | lower %}
+        {% set heat = heat_option | lower %}
+        {% set cool = cool_option | lower %}
+        {% if mode == heat or mode in ['heat', 'heating'] %}
+          heat
+        {% elif mode == cool or mode in ['cool', 'cooling'] %}
+          cool
+        {% else %}
+          unknown
+        {% endif %}
+
+      group_mode_age_minutes: >-
+        {% set obj = states[group_hvac_mode_helper] %}
+        {% if obj is not none %}
+          {{ ((as_timestamp(now()) - as_timestamp(obj.last_changed)) / 60) | float(0) }}
+        {% else %}
+          0
+        {% endif %}
+
+      available_climate_count: >-
+        {% set ns = namespace(count=0) %}
+        {% for e in expand(group_climates) %}
+          {% set current = state_attr(e.entity_id, 'current_temperature') | float(none) %}
+          {% set low = state_attr(e.entity_id, 'target_temp_low') | float(none) %}
+          {% set high = state_attr(e.entity_id, 'target_temp_high') | float(none) %}
+          {% if current is not none and low is not none and high is not none %}
+            {% set ns.count = ns.count + 1 %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.count }}
+
+      cool_votes: >-
+        {% set ns = namespace(count=0) %}
+        {% for e in expand(group_climates) %}
+          {% set current = state_attr(e.entity_id, 'current_temperature') | float(none) %}
+          {% set high = state_attr(e.entity_id, 'target_temp_high') | float(none) %}
+          {% if current is not none and high is not none %}
+            {% if current >= (high + (cool_switch_delta | float)) %}
+              {% set ns.count = ns.count + 1 %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.count }}
+
+      heat_votes: >-
+        {% set ns = namespace(count=0) %}
+        {% for e in expand(group_climates) %}
+          {% set current = state_attr(e.entity_id, 'current_temperature') | float(none) %}
+          {% set low = state_attr(e.entity_id, 'target_temp_low') | float(none) %}
+          {% if current is not none and low is not none %}
+            {% if current <= (low - (heat_switch_delta | float)) %}
+              {% set ns.count = ns.count + 1 %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.count }}
+
+      active_unit_for_cool: >-
+        {% set ns = namespace(primary='', fallback='') %}
+        {% for e in expand(group_climates) %}
+          {% if e.state not in ['off', 'unknown', 'unavailable'] %}
+            {% if ns.fallback == '' %}
+              {% set ns.fallback = e.entity_id %}
+            {% endif %}
+            {% if ns.primary == '' and e.state != 'cool' %}
+              {% set ns.primary = e.entity_id %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {% if ns.primary != '' %}
+          {{ ns.primary }}
+        {% else %}
+          {{ ns.fallback }}
+        {% endif %}
+
+      active_unit_for_heat: >-
+        {% set ns = namespace(primary='', fallback='') %}
+        {% for e in expand(group_climates) %}
+          {% if e.state not in ['off', 'unknown', 'unavailable'] %}
+            {% if ns.fallback == '' %}
+              {% set ns.fallback = e.entity_id %}
+            {% endif %}
+            {% if ns.primary == '' and e.state != 'heat' %}
+              {% set ns.primary = e.entity_id %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {% if ns.primary != '' %}
+          {{ ns.primary }}
+        {% else %}
+          {{ ns.fallback }}
+        {% endif %}
+
+      can_switch_by_runtime: >-
+        {{
+          (group_mode_age_minutes | float(0))
+          >=
+          (minimum_mode_runtime_minutes | float(0))
+        }}
+
+      outside_allows_cooling: >-
+        {{
+          (
+            outside_temp is not none
+            and outside_temp >= (outside_cooling_allowed_temp | float)
+          )
+          or
+          (
+            thermal_temp is not none
+            and thermal_temp >= (thermal_cooling_allowed_temp | float)
+          )
+        }}
+
+      outside_allows_heating: >-
+        {{
+          outside_temp is not none
+          and thermal_temp is not none
+          and outside_temp <= (outside_heating_allowed_temp | float)
+          and thermal_temp <= (thermal_heating_allowed_temp | float)
+        }}
+
+      heat_to_cool_allowed: >-
+        {{
+          enable_heat_to_cool | bool
+          and group_mode == 'heat'
+          and can_switch_by_runtime | bool
+          and outside_allows_cooling | bool
+          and (available_climate_count | int) >= (minimum_available_climates | int)
+          and (cool_votes | int) >= (required_cool_votes | int)
+        }}
+
+      cool_to_heat_allowed: >-
+        {{
+          enable_cool_to_heat | bool
+          and group_mode == 'cool'
+          and can_switch_by_runtime | bool
+          and outside_allows_heating | bool
+          and (available_climate_count | int) >= (minimum_available_climates | int)
+          and (heat_votes | int) >= (required_heat_votes | int)
+        }}
+
+  - choose:
+      - alias: Switch group from heat to cool
+        conditions:
+          - condition: template
+            value_template: "{{ heat_to_cool_allowed | bool }}"
+        sequence:
+          - variables:
+              active_group_unit: "{{ active_unit_for_cool | trim }}"
+
+          - choose:
+              - alias: At least one unit is on, switch one real unit to cool
+                conditions:
+                  - condition: template
+                    value_template: "{{ active_group_unit | length > 0 }}"
+                sequence:
+                  - action: climate.set_hvac_mode
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ active_group_unit }}"
+                    data:
+                      hvac_mode: cool
+
+                  - action: input_select.select_option
+                    target:
+                      entity_id: !input group_hvac_mode_helper
+                    data:
+                      option: "{{ cool_option }}"
+
+            default:
+              - alias: No units are on, only update helper to cool
+                action: input_select.select_option
+                target:
+                  entity_id: !input group_hvac_mode_helper
+                data:
+                  option: "{{ cool_option }}"
+
+      - alias: Switch group from cool to heat
+        conditions:
+          - condition: template
+            value_template: "{{ cool_to_heat_allowed | bool }}"
+        sequence:
+          - variables:
+              active_group_unit: "{{ active_unit_for_heat | trim }}"
+
+          - choose:
+              - alias: At least one unit is on, switch one real unit to heat
+                conditions:
+                  - condition: template
+                    value_template: "{{ active_group_unit | length > 0 }}"
+                sequence:
+                  - action: climate.set_hvac_mode
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ active_group_unit }}"
+                    data:
+                      hvac_mode: heat
+
+                  - action: input_select.select_option
+                    target:
+                      entity_id: !input group_hvac_mode_helper
+                    data:
+                      option: "{{ heat_option }}"
+
+            default:
+              - alias: No units are on, only update helper to heat
+                action: input_select.select_option
+                target:
+                  entity_id: !input group_hvac_mode_helper
+                data:
+                  option: "{{ heat_option }}"
