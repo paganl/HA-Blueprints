@@ -22,7 +22,7 @@ blueprint:
     HEAT vote:
       current_temperature <= target_temp_low - heat_switch_delta
 
-    Version: 202605-01
+    Version - 202605-01
 
   domain: automation
   author: Paul Gale
