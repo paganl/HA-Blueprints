@@ -1,0 +1,537 @@
+blueprint:
+  name: A/C Group Mode Participation Optimiser
+  description: >
+    Non-blocking energy saver for one A/C unit controlled by a shared group
+    HVAC mode helper.
+
+    This blueprint does not decide the group HVAC mode. It assumes another
+    automation manages a group helper such as input_select.group_a_hvac_mode
+    or input_select.group_b_hvac_mode.
+
+    The unit can temporarily leave the group by turning itself off. Since your
+    group sync automation ignores OFF. This allows individual units to sleep
+    without fighting the group sync.
+
+    Designed for Mitsubishi CN105-style dual-setpoint climate entities exposing:
+      - current_temperature
+      - target_temp_low
+      - target_temp_high
+
+    Group mode behaviour:
+      group mode heat:
+        sleep when current_temperature >= target_temp_low + heat overshoot
+        restore heat when current_temperature <= target_temp_low + heat resume margin
+
+      group mode cool:
+        sleep when current_temperature <= target_temp_high - cool undershoot
+        restore cool when current_temperature >= target_temp_high - cool resume margin
+
+    The timer is used as a minimum sleep period. The automation does not block.
+    Each run evaluates, takes at most one action, and exits.
+
+    Version: 202605-01
+
+  domain: automation
+  author: Paul Gale
+  homeassistant:
+    min_version: 2026.5.0
+
+  input:
+    climate_entity:
+      name: A/C climate entity
+      selector:
+        entity:
+          filter:
+            - domain: climate
+
+    group_hvac_mode_entity:
+      name: Group HVAC mode helper
+      description: >
+        An entity that stores the desired group mode. Its state should be heat or cool.
+        This can be input_select.group_a_hvac_mode or input_select.group_b_hvac_mode.
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+            - domain: input_text
+            - domain: sensor
+            - domain: select
+
+    outside_temperature_sensor:
+      name: Outside temperature sensor
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+
+    sleep_timer:
+      name: Per-unit sleep timer
+      description: >
+        Timer helper for this individual A/C unit. Use one unique timer per A/C.
+        Enable Restore on the timer helper.
+      selector:
+        entity:
+          filter:
+            - domain: timer
+
+    heat_overshoot_delta:
+      name: Heat overshoot amount
+      description: >
+        In group heat mode, put the unit to sleep when the current_temperature is
+        this many degrees above target_temp_low.
+      default: 2
+      selector:
+        number:
+          min: 0.5
+          max: 10
+          step: 0.1
+          mode: box
+          unit_of_measurement: "°"
+
+    cool_undershoot_delta:
+      name: Cool undershoot amount
+      description: >
+        In group cool mode, put the unit to sleep when the current temperature is
+        this many degrees below target_temp_high.
+      default: 2
+      selector:
+        number:
+          min: 0.5
+          max: 10
+          step: 0.1
+          mode: box
+          unit_of_measurement: "°"
+
+    heat_resume_margin:
+      name: Heat resume margin
+      description: >
+        In group heat mode, restore the unit when the current_temperature is at or
+        below target_temp_low plus this margin.
+      default: 0.5
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.1
+          mode: box
+          unit_of_measurement: "°"
+
+    cool_resume_margin:
+      name: Cool resume margin
+      description: >
+        In group cool mode, restore the unit when the current temperature is at or
+        above target_temp_high minus this margin.
+      default: 0.5
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.1
+          mode: box
+          unit_of_measurement: "°"
+
+    outside_cold_temp:
+      name: Outside cold threshold
+      description: >
+        Heating sleep uses the cold sleep duration below this outside temperature.
+      default: 5
+      selector:
+        number:
+          min: -30
+          max: 40
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°"
+
+    outside_mild_temp:
+      name: Outside mild threshold
+      description: >
+        Heating: cold to mild uses medium sleep; mild and above uses warm sleep.
+        Cooling: below mild uses cool-outside sleep; mild to hot uses medium sleep.
+      default: 15
+      selector:
+        number:
+          min: -30
+          max: 40
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°"
+
+    outside_hot_temp:
+      name: Outside hot threshold
+      description: >
+        Cooling sleep uses the hot sleep duration when the outside temperature is at or above this value.
+      default: 25
+      selector:
+        number:
+          min: -30
+          max: 50
+          step: 0.5
+          mode: box
+          unit_of_measurement: "°"
+
+    heat_sleep_minutes_cold:
+      name: Heat sleep minutes when outside is cold
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 240
+          step: 1
+          mode: box
+          unit_of_measurement: min
+
+    heat_sleep_minutes_mild:
+      name: Heat sleep minutes when outside is mild
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 240
+          step: 1
+          mode: box
+          unit_of_measurement: min
+
+    heat_sleep_minutes_warm:
+      name: Heat sleep minutes when outside is warm
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 360
+          step: 1
+          mode: box
+          unit_of_measurement: min
+
+    cool_sleep_minutes_hot:
+      name: Cool sleep minutes when outside is hot
+      description: >
+        Shorter sleep when outside is hot, because the room may heat up quickly.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 240
+          step: 1
+          mode: box
+          unit_of_measurement: min
+
+    cool_sleep_minutes_mild:
+      name: Cool sleep minutes when outside is mild
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 240
+          step: 1
+          mode: box
+          unit_of_measurement: min
+
+    cool_sleep_minutes_cool:
+      name: Cool sleep minutes when outside is cool
+      description: >
+        Longer sleep when outside is cool, because the room is less likely to
+        need cooling soon.
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 360
+          step: 1
+          mode: box
+          unit_of_measurement: min
+
+    wake_early_on_group_mode_change:
+      name: Wake early when group mode changes
+      description: >
+        If the unit is sleeping and the group mode changes, wake the unit early
+        if the new group mode is currently needed.
+      default: true
+      selector:
+        boolean:
+
+mode: queued
+max: 10
+
+triggers:
+  - trigger: state
+    entity_id: !input climate_entity
+    id: climate_state_changed
+
+  - trigger: state
+    entity_id: !input climate_entity
+    attribute: current_temperature
+    id: climate_temp_changed
+
+  - trigger: state
+    entity_id: !input climate_entity
+    attribute: target_temp_low
+    id: target_low_changed
+
+  - trigger: state
+    entity_id: !input climate_entity
+    attribute: target_temp_high
+    id: target_high_changed
+
+  - trigger: state
+    entity_id: !input group_hvac_mode_entity
+    id: group_mode_changed
+
+  - trigger: state
+    entity_id: !input outside_temperature_sensor
+    id: outside_temp_changed
+
+  - trigger: timer.finished
+    target:
+      entity_id: !input sleep_timer
+    id: sleep_timer_finished
+
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+
+variables:
+  ac: !input climate_entity
+  group_mode_entity: !input group_hvac_mode_entity
+  outside_sensor: !input outside_temperature_sensor
+  sleep_timer: !input sleep_timer
+
+  heat_overshoot_delta: !input heat_overshoot_delta
+  cool_undershoot_delta: !input cool_undershoot_delta
+  heat_resume_margin: !input heat_resume_margin
+  cool_resume_margin: !input cool_resume_margin
+
+  outside_cold_temp: !input outside_cold_temp
+  outside_mild_temp: !input outside_mild_temp
+  outside_hot_temp: !input outside_hot_temp
+
+  heat_sleep_minutes_cold: !input heat_sleep_minutes_cold
+  heat_sleep_minutes_mild: !input heat_sleep_minutes_mild
+  heat_sleep_minutes_warm: !input heat_sleep_minutes_warm
+
+  cool_sleep_minutes_hot: !input cool_sleep_minutes_hot
+  cool_sleep_minutes_mild: !input cool_sleep_minutes_mild
+  cool_sleep_minutes_cool: !input cool_sleep_minutes_cool
+
+  wake_early_on_group_mode_change: !input wake_early_on_group_mode_change
+
+actions:
+  - variables:
+      trigger_id: >-
+        {% if trigger is defined and trigger.id is defined %}
+          {{ trigger.id }}
+        {% else %}
+          manual
+        {% endif %}
+
+      raw_group_mode: "{{ states(group_mode_entity) | lower }}"
+      group_mode: >-
+        {% set mode = states(group_mode_entity) | lower %}
+        {% if mode in ['heat', 'heating'] %}
+          heat
+        {% elif mode in ['cool', 'cooling'] %}
+          cool
+        {% else %}
+          unknown
+        {% endif %}
+
+      unit_mode: "{{ states(ac) | lower }}"
+      timer_state: "{{ states(sleep_timer) | lower }}"
+
+      timer_is_running: "{{ states(sleep_timer) in ['active', 'paused'] }}"
+      timer_is_idle: "{{ states(sleep_timer) == 'idle' }}"
+
+      current_temp: "{{ state_attr(ac, 'current_temperature') | float(none) }}"
+      low_target_temp: "{{ state_attr(ac, 'target_temp_low') | float(none) }}"
+      high_target_temp: "{{ state_attr(ac, 'target_temp_high') | float(none) }}"
+      outside_temp: "{{ states(outside_sensor) | float(none) }}"
+
+      heat_sleep_needed: >-
+        {% set room = state_attr(ac, 'current_temperature') | float(none) %}
+        {% set low = state_attr(ac, 'target_temp_low') | float(none) %}
+        {{
+          room is not none
+          and low is not none
+          and room >= (low + (heat_overshoot_delta | float))
+        }}
+
+      cool_sleep_needed: >-
+        {% set room = state_attr(ac, 'current_temperature') | float(none) %}
+        {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
+        {{
+          room is not none
+          and high is not none
+          and room <= (high - (cool_undershoot_delta | float))
+        }}
+
+      heat_restore_needed: >-
+        {% set room = state_attr(ac, 'current_temperature') | float(none) %}
+        {% set low = state_attr(ac, 'target_temp_low') | float(none) %}
+        {{
+          room is not none
+          and low is not none
+          and room <= (low + (heat_resume_margin | float))
+        }}
+
+      cool_restore_needed: >-
+        {% set room = state_attr(ac, 'current_temperature') | float(none) %}
+        {% set high = state_attr(ac, 'target_temp_high') | float(none) %}
+        {{
+          room is not none
+          and high is not none
+          and room >= (high - (cool_resume_margin | float))
+        }}
+
+      heat_sleep_minutes_now: >-
+        {% set out = states(outside_sensor) | float(none) %}
+        {% if out is none %}
+          {{ heat_sleep_minutes_mild | int }}
+        {% elif out < (outside_cold_temp | float) %}
+          {{ heat_sleep_minutes_cold | int }}
+        {% elif out < (outside_mild_temp | float) %}
+          {{ heat_sleep_minutes_mild | int }}
+        {% else %}
+          {{ heat_sleep_minutes_warm | int }}
+        {% endif %}
+
+      cool_sleep_minutes_now: >-
+        {% set out = states(outside_sensor) | float(none) %}
+        {% if out is none %}
+          {{ cool_sleep_minutes_mild | int }}
+        {% elif out >= (outside_hot_temp | float) %}
+          {{ cool_sleep_minutes_hot | int }}
+        {% elif out >= (outside_mild_temp | float) %}
+          {{ cool_sleep_minutes_mild | int }}
+        {% else %}
+          {{ cool_sleep_minutes_cool | int }}
+        {% endif %}
+
+  - choose:
+      - alias: Cancel timer if group mode is not heat or cool
+        conditions:
+          - condition: template
+            value_template: >-
+              {{
+                group_mode not in ['heat', 'cool']
+                and timer_is_running | bool
+              }}
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: !input sleep_timer
+
+      - alias: Cancel stale sleep timer if unit has already been turned back on
+        conditions:
+          - condition: template
+            value_template: >-
+              {{
+                timer_is_running | bool
+                and unit_mode not in ['off', 'unknown', 'unavailable']
+              }}
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: !input sleep_timer
+
+      - alias: Wake sleeping unit early after group mode change if new mode is needed
+        conditions:
+          - condition: template
+            value_template: >-
+              {{
+                wake_early_on_group_mode_change | bool
+                and trigger_id == 'group_mode_changed'
+                and timer_is_running | bool
+                and unit_mode == 'off'
+                and (
+                  (group_mode == 'heat' and heat_restore_needed | bool)
+                  or
+                  (group_mode == 'cool' and cool_restore_needed | bool)
+                )
+              }}
+        sequence:
+          - action: timer.cancel
+            target:
+              entity_id: !input sleep_timer
+
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_entity
+            data:
+              hvac_mode: "{{ group_mode }}"
+
+      - alias: Restore heat when timer is idle and heat is needed
+        conditions:
+          - condition: template
+            value_template: >-
+              {{
+                group_mode == 'heat'
+                and unit_mode == 'off'
+                and timer_is_idle | bool
+                and heat_restore_needed | bool
+              }}
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_entity
+            data:
+              hvac_mode: heat
+
+      - alias: Restore cool when timer is idle and cooling is needed
+        conditions:
+          - condition: template
+            value_template: >-
+              {{
+                group_mode == 'cool'
+                and unit_mode == 'off'
+                and timer_is_idle | bool
+                and cool_restore_needed | bool
+              }}
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_entity
+            data:
+              hvac_mode: cool
+
+      - alias: Heat mode - sleep unit because room is already warm enough
+        conditions:
+          - condition: template
+            value_template: >-
+              {{
+                group_mode == 'heat'
+                and unit_mode == 'heat'
+                and timer_is_idle | bool
+                and heat_sleep_needed | bool
+              }}
+        sequence:
+          - action: timer.start
+            target:
+              entity_id: !input sleep_timer
+            data:
+              duration: "{{ (heat_sleep_minutes_now | int) * 60 }}"
+
+          - action: climate.turn_off
+            target:
+              entity_id: !input climate_entity
+
+      - alias: Cool mode - sleep unit because room is already cool enough
+        conditions:
+          - condition: template
+            value_template: >-
+              {{
+                group_mode == 'cool'
+                and unit_mode == 'cool'
+                and timer_is_idle | bool
+                and cool_sleep_needed | bool
+              }}
+        sequence:
+          - action: timer.start
+            target:
+              entity_id: !input sleep_timer
+            data:
+              duration: "{{ (cool_sleep_minutes_now | int) * 60 }}"
+
+          - action: climate.turn_off
+            target:
+              entity_id: !input climate_entity
