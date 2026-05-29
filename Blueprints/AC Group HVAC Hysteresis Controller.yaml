@@ -23,12 +23,15 @@ blueprint:
       HEAT vote:
         current_temperature <= that unit's target_temp_low - heat_switch_delta
 
-    No heat/cool target temperatures are hardcoded in this blueprint.
+    External temperature:
+      Uses one outside/thermal temperature sensor as the permission signal.
+      Recommended: a 6h average outside temperature sensor.
+      If you do not have one yet, use your raw OpenWeather temperature sensor.
 
-    Version - 202505-02
+    Version - 202605-03
 
   domain: automation
-  author: Paul Gale & ChatGPT
+  author: ChatGPT
   homeassistant:
     min_version: 2026.5.0
 
@@ -52,19 +55,11 @@ blueprint:
           filter:
             - domain: input_select
 
-    outside_temperature_sensor:
-      name: Outside temperature sensor
-      selector:
-        entity:
-          filter:
-            - domain: sensor
-              device_class: temperature
-
-    thermal_temperature_sensor:
-      name: Thermal mass / outside average temperature sensor
+    external_temperature_sensor:
+      name: External / thermal temperature sensor
       description: >
-        Use a moving-average outside temperature sensor here if you have one.
-        If not, select the same entity as the normal outside temperature sensor.
+        Use your 6h outside average sensor here. If you do not have one yet,
+        use sensor.openweathermap_temperature.
       selector:
         entity:
           filter:
@@ -164,24 +159,11 @@ blueprint:
           step: 1
           mode: box
 
-    outside_cooling_allowed_temp:
-      name: Current outside temperature allowing cooling
+    cooling_allowed_external_temp:
+      name: External temperature allowing cooling
       description: >
-        Heat → cool is allowed if current outside temperature is at or above this
-        value OR the thermal/average sensor is at or above its cooling value.
-      default: 20
-      selector:
-        number:
-          min: -20
-          max: 50
-          step: 0.5
-          mode: box
-          unit_of_measurement: "°"
-
-    thermal_cooling_allowed_temp:
-      name: Thermal average temperature allowing cooling
-      description: >
-        Heat → cool is allowed if the thermal/average sensor is at or above this value.
+        Heat → cool is allowed only when the external/thermal temperature sensor
+        is at or above this value.
       default: 22
       selector:
         number:
@@ -191,23 +173,11 @@ blueprint:
           mode: box
           unit_of_measurement: "°"
 
-    outside_heating_allowed_temp:
-      name: Current outside temperature allowing heating
+    heating_allowed_external_temp:
+      name: External temperature allowing heating
       description: >
-        Cool → heat is allowed only when current outside temperature is at or below this value.
-      default: 16
-      selector:
-        number:
-          min: -30
-          max: 40
-          step: 0.5
-          mode: box
-          unit_of_measurement: "°"
-
-    thermal_heating_allowed_temp:
-      name: Thermal average temperature allowing heating
-      description: >
-        Cool → heat is allowed only when the thermal/average sensor is at or below this value.
+        Cool → heat is allowed only when the external/thermal temperature sensor
+        is at or below this value.
       default: 17
       selector:
         number:
@@ -255,12 +225,8 @@ triggers:
     id: target_high_changed
 
   - trigger: state
-    entity_id: !input outside_temperature_sensor
-    id: outside_temperature_changed
-
-  - trigger: state
-    entity_id: !input thermal_temperature_sensor
-    id: thermal_temperature_changed
+    entity_id: !input external_temperature_sensor
+    id: external_temperature_changed
 
   - trigger: state
     entity_id: !input group_hvac_mode_helper
@@ -277,8 +243,7 @@ triggers:
 variables:
   group_climates: !input group_climate_entities
   group_hvac_mode_helper: !input group_hvac_mode_helper
-  outside_sensor: !input outside_temperature_sensor
-  thermal_sensor: !input thermal_temperature_sensor
+  external_sensor: !input external_temperature_sensor
 
   heat_option: !input heat_option
   cool_option: !input cool_option
@@ -293,10 +258,8 @@ variables:
   required_heat_votes: !input required_heat_votes
   minimum_available_climates: !input minimum_available_climates
 
-  outside_cooling_allowed_temp: !input outside_cooling_allowed_temp
-  thermal_cooling_allowed_temp: !input thermal_cooling_allowed_temp
-  outside_heating_allowed_temp: !input outside_heating_allowed_temp
-  thermal_heating_allowed_temp: !input thermal_heating_allowed_temp
+  cooling_allowed_external_temp: !input cooling_allowed_external_temp
+  heating_allowed_external_temp: !input heating_allowed_external_temp
 
   minimum_mode_runtime_minutes: !input minimum_mode_runtime_minutes
 
@@ -309,8 +272,7 @@ actions:
           manual
         {% endif %}
 
-      outside_temp: "{{ states(outside_sensor) | float(none) }}"
-      thermal_temp: "{{ states(thermal_sensor) | float(none) }}"
+      external_temp: "{{ states(external_sensor) | float(none) }}"
 
       raw_group_mode: "{{ states(group_hvac_mode_helper) }}"
 
@@ -415,25 +377,16 @@ actions:
           (minimum_mode_runtime_minutes | float(0))
         }}
 
-      outside_allows_cooling: >-
+      external_allows_cooling: >-
         {{
-          (
-            outside_temp is not none
-            and outside_temp >= (outside_cooling_allowed_temp | float)
-          )
-          or
-          (
-            thermal_temp is not none
-            and thermal_temp >= (thermal_cooling_allowed_temp | float)
-          )
+          external_temp is not none
+          and external_temp >= (cooling_allowed_external_temp | float)
         }}
 
-      outside_allows_heating: >-
+      external_allows_heating: >-
         {{
-          outside_temp is not none
-          and thermal_temp is not none
-          and outside_temp <= (outside_heating_allowed_temp | float)
-          and thermal_temp <= (thermal_heating_allowed_temp | float)
+          external_temp is not none
+          and external_temp <= (heating_allowed_external_temp | float)
         }}
 
       heat_to_cool_allowed: >-
@@ -441,7 +394,7 @@ actions:
           enable_heat_to_cool | bool
           and group_mode == 'heat'
           and can_switch_by_runtime | bool
-          and outside_allows_cooling | bool
+          and external_allows_cooling | bool
           and (available_climate_count | int) >= (minimum_available_climates | int)
           and (cool_votes | int) >= (required_cool_votes | int)
         }}
@@ -451,7 +404,7 @@ actions:
           enable_cool_to_heat | bool
           and group_mode == 'cool'
           and can_switch_by_runtime | bool
-          and outside_allows_heating | bool
+          and external_allows_heating | bool
           and (available_climate_count | int) >= (minimum_available_climates | int)
           and (heat_votes | int) >= (required_heat_votes | int)
         }}
