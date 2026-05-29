@@ -16,24 +16,26 @@ blueprint:
       - target_temp_low
       - target_temp_high
 
-    COOL vote:
-      current_temperature >= target_temp_high + cool_switch_delta
+    Per-unit dynamic voting:
+      COOL vote:
+        current_temperature >= that unit's target_temp_high + cool_switch_delta
 
-    HEAT vote:
-      current_temperature <= target_temp_low - heat_switch_delta
+      HEAT vote:
+        current_temperature <= that unit's target_temp_low - heat_switch_delta
 
-    Version - 202605-01
+    No heat/cool target temperatures are hardcoded in this blueprint.
+
+    Version - 202505-02
 
   domain: automation
-  author: Paul Gale
+  author: Paul Gale & ChatGPT
   homeassistant:
     min_version: 2026.5.0
 
   input:
     group_climate_entities:
       name: Group climate entities
-      description: >
-        Select all climate entities that belong to this group.
+      description: Select all climate entities that belong to this group.
       selector:
         entity:
           multiple: true
@@ -61,9 +63,8 @@ blueprint:
     thermal_temperature_sensor:
       name: Thermal mass / outside average temperature sensor
       description: >
-        Optional-style input. Use a moving-average outside temperature sensor
-        here if you have one. If not, select the same entity as the normal
-        outside temperature sensor.
+        Use a moving-average outside temperature sensor here if you have one.
+        If not, select the same entity as the normal outside temperature sensor.
       selector:
         entity:
           filter:
@@ -72,16 +73,14 @@ blueprint:
 
     heat_option:
       name: Exact HEAT option text
-      description: >
-        Must exactly match the HEAT option in the input_select helper.
+      description: Must exactly match the HEAT option in the input_select helper.
       default: heat
       selector:
         text:
 
     cool_option:
       name: Exact COOL option text
-      description: >
-        Must exactly match the COOL option in the input_select helper.
+      description: Must exactly match the COOL option in the input_select helper.
       default: cool
       selector:
         text:
@@ -99,10 +98,10 @@ blueprint:
         boolean:
 
     cool_switch_delta:
-      name: Cool switch hysteresis delta
+      name: Cool switch margin above each unit's high target
       description: >
-        A room votes for cooling when current_temperature is this many degrees
-        above target_temp_high.
+        A unit votes for cooling when its current_temperature is this many
+        degrees above its own target_temp_high.
       default: 0.5
       selector:
         number:
@@ -113,10 +112,10 @@ blueprint:
           unit_of_measurement: "°"
 
     heat_switch_delta:
-      name: Heat switch hysteresis delta
+      name: Heat switch margin below each unit's low target
       description: >
-        A room votes for heating when current_temperature is this many degrees
-        below target_temp_low.
+        A unit votes for heating when its current_temperature is this many
+        degrees below its own target_temp_low.
       default: 0.5
       selector:
         number:
@@ -166,10 +165,10 @@ blueprint:
           mode: box
 
     outside_cooling_allowed_temp:
-      name: Outside temperature required for cooling
+      name: Current outside temperature allowing cooling
       description: >
-        Heat → cool is allowed when the current outside temperature is at or
-        above this value OR the thermal/average sensor is above its cooling value.
+        Heat → cool is allowed if current outside temperature is at or above this
+        value OR the thermal/average sensor is at or above its cooling value.
       default: 20
       selector:
         number:
@@ -180,7 +179,7 @@ blueprint:
           unit_of_measurement: "°"
 
     thermal_cooling_allowed_temp:
-      name: Thermal average temperature required for cooling
+      name: Thermal average temperature allowing cooling
       description: >
         Heat → cool is allowed if the thermal/average sensor is at or above this value.
       default: 22
@@ -193,10 +192,9 @@ blueprint:
           unit_of_measurement: "°"
 
     outside_heating_allowed_temp:
-      name: Outside temperature required for heating
+      name: Current outside temperature allowing heating
       description: >
-        Cool → heat is allowed only when the current outside temperature is at
-        or below this value.
+        Cool → heat is allowed only when current outside temperature is at or below this value.
       default: 16
       selector:
         number:
@@ -207,7 +205,7 @@ blueprint:
           unit_of_measurement: "°"
 
     thermal_heating_allowed_temp:
-      name: Thermal average temperature required for heating
+      name: Thermal average temperature allowing heating
       description: >
         Cool → heat is allowed only when the thermal/average sensor is at or below this value.
       default: 17
