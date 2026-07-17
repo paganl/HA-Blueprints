@@ -8,7 +8,7 @@ blueprint:
     The blueprint does not directly set HVAC mode or temperature. It only enables
     the correct schedule set for the selected climate unit.
 
-    Version: 202605-17
+    Version: 202717-18
 
   domain: automation
 
@@ -47,7 +47,7 @@ blueprint:
     comfort_schedules:
       name: Comfort schedule switches
       description: >
-        Schedule switch or switches to turn on when the selected person condition
+        Schedule switch or switches to turn on when the selected person's condition
         is met.
       selector:
         target:
@@ -57,7 +57,7 @@ blueprint:
     away_schedules:
       name: Away schedule switches
       description: >
-        Schedule switch or switches to turn on when the selected person condition
+        Schedule switch or switches to turn on when the selected person's condition
         is not met.
       selector:
         target:
@@ -148,6 +148,9 @@ triggers:
 
   - trigger: state
     entity_id: !input climate_unit
+    from:
+      - "unknown"
+      - "unavailable"
 
 actions:
   - delay: !input settle_delay
