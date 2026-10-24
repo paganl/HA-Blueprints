@@ -126,3 +126,345 @@ blueprint:
 
     limits:
       name: Physical setpoint limits
+      icon: mdi:thermometer-chevron-up
+      collapsed: true
+      input:
+        fallback_heat_max:
+          name: Fallback heating maximum
+          description: >
+            Used only if the physical climate entity does not publish max_temp.
+          default: 30
+          selector:
+            number:
+              min: 20
+              max: 35
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
+
+        fallback_cool_min:
+          name: Fallback cooling minimum
+          description: >
+            Used only if the physical climate entity does not publish min_temp.
+          default: 16
+          selector:
+            number:
+              min: 10
+              max: 25
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
+
+    safety:
+      name: Safety and recovery
+      icon: mdi:shield-check
+      collapsed: true
+      input:
+        sensor_failure_action:
+          name: External sensor failure
+          description: >
+            What to do if the external temperature or virtual target is
+            unknown/unavailable. Turning the unit off is the safer default.
+          default: turn_off
+          selector:
+            select:
+              options:
+                - label: Turn physical unit off
+                  value: turn_off
+                - label: Leave physical unit unchanged
+                  value: leave_unchanged
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  virtual_climate: !input virtual_climate
+  external_temperature: !input external_temperature
+  physical_climate: !input physical_climate
+  start_deadband: !input start_deadband
+  stop_deadband: !input stop_deadband
+  minimum_run_time: !input minimum_run_time
+  minimum_off_time: !input minimum_off_time
+  fallback_heat_max: !input fallback_heat_max
+  fallback_cool_min: !input fallback_cool_min
+  sensor_failure_action: !input sensor_failure_action
+
+  requested_mode: "{{ states(virtual_climate) }}"
+  current_temperature: "{{ states(external_temperature) }}"
+  target_temperature: "{{ state_attr(virtual_climate, 'temperature') }}"
+  physical_mode: "{{ states(physical_climate) }}"
+  physical_target: "{{ state_attr(physical_climate, 'temperature') }}"
+
+  heat_extreme: >
+    {{ state_attr(physical_climate, 'max_temp') | float(fallback_heat_max) }}
+  cool_extreme: >
+    {{ state_attr(physical_climate, 'min_temp') | float(fallback_cool_min) }}
+
+  sensor_valid: >
+    {{ current_temperature not in ['unknown', 'unavailable', 'none', 'None', '']
+       and target_temperature is not none }}
+
+  temp: "{{ current_temperature | float(0) }}"
+  target: "{{ target_temperature | float(0) }}"
+
+  seconds_in_physical_mode: >
+    {% if states[physical_climate] is defined %}
+      {{ (as_timestamp(now()) - as_timestamp(states[physical_climate].last_changed)) | int(0) }}
+    {% else %}
+      0
+    {% endif %}
+
+triggers:
+  # Re-evaluate whenever the authoritative room temperature changes.
+  - trigger: state
+    entity_id: !input external_temperature
+    id: temperature_changed
+
+  # Re-evaluate when the user changes virtual mode or target.
+  - trigger: state
+    entity_id: !input virtual_climate
+    id: virtual_changed
+
+  # Reconcile if the physical unit is changed manually or by another automation.
+  - trigger: state
+    entity_id: !input physical_climate
+    id: physical_changed
+
+  # Ensures minimum run/off timers eventually cause a transition even if
+  # temperature remains perfectly steady.
+  - trigger: time_pattern
+    minutes: "/1"
+    id: periodic_reconcile
+
+actions:
+  # 1. Fail-safe: no trustworthy current temperature/target.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ not sensor_valid }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: >
+                  {{ sensor_failure_action == 'turn_off'
+                     and physical_mode not in ['off', 'unknown', 'unavailable'] }}
+            then:
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: !input physical_climate
+                data:
+                  hvac_mode: "off"
+          - stop: "External temperature or virtual target is unavailable."
+
+  # 2. Explicit virtual OFF always wins immediately.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ requested_mode == 'off' }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ physical_mode != 'off' }}"
+            then:
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: !input physical_climate
+                data:
+                  hvac_mode: "off"
+          - stop: "Virtual thermostat is off."
+
+  # 3. Only HEAT and COOL are controlled by this blueprint.
+  #    Any other virtual mode is failed safe to OFF.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ requested_mode not in ['heat', 'cool'] }}"
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ physical_mode != 'off' }}"
+            then:
+              - action: climate.set_hvac_mode
+                target:
+                  entity_id: !input physical_climate
+                data:
+                  hvac_mode: "off"
+          - stop: "Unsupported virtual HVAC mode."
+
+  # 4. A mode reversal always passes through OFF. The periodic trigger will
+  #    start the opposite mode after minimum_off_time has elapsed.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ (requested_mode == 'heat' and physical_mode == 'cool')
+                 or (requested_mode == 'cool' and physical_mode == 'heat') }}
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input physical_climate
+            data:
+              hvac_mode: "off"
+          - stop: "Mode reversal: physical unit switched off before restart."
+
+  # 5. HEATING CONTROL
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ requested_mode == 'heat' }}"
+        sequence:
+          - choose:
+              # Demand starts below target - start_deadband.
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ temp <= (target - (start_deadband | float(0.3))) }}
+                sequence:
+                  - choose:
+                      # If already in HEAT, repair the physical target if needed.
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ physical_mode == 'heat' }}"
+                        sequence:
+                          - if:
+                              - condition: template
+                                value_template: >
+                                  {{ physical_target is none
+                                     or ((physical_target | float(0)) - (heat_extreme | float(0))) | abs > 0.05 }}
+                            then:
+                              - action: climate.set_temperature
+                                target:
+                                  entity_id: !input physical_climate
+                                data:
+                                  hvac_mode: heat
+                                  temperature: "{{ heat_extreme | float }}"
+
+                      # Start from OFF only after minimum_off_time.
+                      - conditions:
+                          - condition: template
+                            value_template: >
+                              {{ physical_mode == 'off'
+                                 and (seconds_in_physical_mode | int(0)) >= (minimum_off_time | int(0)) }}
+                        sequence:
+                          - action: climate.set_temperature
+                            target:
+                              entity_id: !input physical_climate
+                            data:
+                              hvac_mode: heat
+                              temperature: "{{ heat_extreme | float }}"
+
+              # Demand stops above target + stop_deadband.
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ temp >= (target + (stop_deadband | float(0))) }}
+                sequence:
+                  - if:
+                      - condition: template
+                        value_template: >
+                          {{ physical_mode == 'heat'
+                             and (seconds_in_physical_mode | int(0)) >= (minimum_run_time | int(0)) }}
+                    then:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: !input physical_climate
+                        data:
+                          hvac_mode: "off"
+
+              # Inside the deadband: preserve current state, but if the unit is
+              # running, keep its physical target pinned to MAX.
+            default:
+              - if:
+                  - condition: template
+                    value_template: >
+                      {{ physical_mode == 'heat'
+                         and (physical_target is none
+                              or ((physical_target | float(0)) - (heat_extreme | float(0))) | abs > 0.05) }}
+                then:
+                  - action: climate.set_temperature
+                    target:
+                      entity_id: !input physical_climate
+                    data:
+                      hvac_mode: heat
+                      temperature: "{{ heat_extreme | float }}"
+
+  # 6. COOLING CONTROL
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ requested_mode == 'cool' }}"
+        sequence:
+          - choose:
+              # Demand starts above target + start_deadband.
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ temp >= (target + (start_deadband | float(0.3))) }}
+                sequence:
+                  - choose:
+                      # If already in COOL, repair the physical target if needed.
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ physical_mode == 'cool' }}"
+                        sequence:
+                          - if:
+                              - condition: template
+                                value_template: >
+                                  {{ physical_target is none
+                                     or ((physical_target | float(0)) - (cool_extreme | float(0))) | abs > 0.05 }}
+                            then:
+                              - action: climate.set_temperature
+                                target:
+                                  entity_id: !input physical_climate
+                                data:
+                                  hvac_mode: cool
+                                  temperature: "{{ cool_extreme | float }}"
+
+                      # Start from OFF only after minimum_off_time.
+                      - conditions:
+                          - condition: template
+                            value_template: >
+                              {{ physical_mode == 'off'
+                                 and (seconds_in_physical_mode | int(0)) >= (minimum_off_time | int(0)) }}
+                        sequence:
+                          - action: climate.set_temperature
+                            target:
+                              entity_id: !input physical_climate
+                            data:
+                              hvac_mode: cool
+                              temperature: "{{ cool_extreme | float }}"
+
+              # Demand stops below target - stop_deadband.
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ temp <= (target - (stop_deadband | float(0))) }}
+                sequence:
+                  - if:
+                      - condition: template
+                        value_template: >
+                          {{ physical_mode == 'cool'
+                             and (seconds_in_physical_mode | int(0)) >= (minimum_run_time | int(0)) }}
+                    then:
+                      - action: climate.set_hvac_mode
+                        target:
+                          entity_id: !input physical_climate
+                        data:
+                          hvac_mode: "off"
+
+              # Inside the deadband: preserve current state, but if the unit is
+              # running, keep its physical target pinned to MIN.
+            default:
+              - if:
+                  - condition: template
+                    value_template: >
+                      {{ physical_mode == 'cool'
+                         and (physical_target is none
+                              or ((physical_target | float(0)) - (cool_extreme | float(0))) | abs > 0.05) }}
+                then:
+                  - action: climate.set_temperature
+                    target:
+                      entity_id: !input physical_climate
+                    data:
+                      hvac_mode: cool
+                      temperature: "{{ cool_extreme | float }}"
