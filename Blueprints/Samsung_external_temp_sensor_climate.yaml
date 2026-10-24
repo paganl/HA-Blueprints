@@ -1,0 +1,128 @@
+blueprint:
+  name: External Sensor Climate Controller
+  description: >
+    Controls a physical heat-pump/air-conditioner from a separate virtual climate
+    entity and an authoritative external temperature sensor.
+
+    When heating is required, the physical climate entity is placed in HEAT mode
+    and driven to its maximum supported target temperature. When cooling is
+    required, it is placed in COOL mode and driven to its minimum supported
+    target temperature. The physical unit is switched off when the virtual target
+    is satisfied.
+
+    Includes configurable hysteresis, minimum run time, minimum off time,
+    fail-safe handling, mode-change protection, periodic reconciliation, and
+    automatic repair if the physical unit's target is changed manually.
+
+    The physical unit's own room-temperature measurement is deliberately ignored.
+
+    Intended architecture:
+      Virtual climate = user interface / requested target and mode
+      External sensor = authoritative current room temperature
+      Physical climate = actuator
+      Power sensor = optional observability outside this control loop
+
+  domain: automation
+  author: Paul Gale / ChatGPT
+  homeassistant:
+    min_version: 2026.10.0
+
+  input:
+    entities:
+      name: Core entities
+      icon: mdi:thermostat
+      input:
+        virtual_climate:
+          name: Virtual climate entity
+          description: >
+            The thermostat the user interacts with. Its target temperature and
+            HVAC mode (off/heat/cool) are treated as the requested state.
+          selector:
+            entity:
+              filter:
+                - domain: climate
+
+        external_temperature:
+          name: External temperature sensor
+          description: >
+            Authoritative room-temperature sensor. The physical air-conditioner's
+            own internal temperature is ignored.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+
+        physical_climate:
+          name: Physical air-conditioner
+          description: >
+            The real Samsung (or other) climate entity that will be driven as an
+            actuator.
+          selector:
+            entity:
+              filter:
+                - domain: climate
+
+    thermostat:
+      name: Thermostat behaviour
+      icon: mdi:tune-vertical
+      input:
+        start_deadband:
+          name: Start deadband
+          description: >
+            Heating starts this many degrees below target; cooling starts this
+            many degrees above target.
+          default: 0.3
+          selector:
+            number:
+              min: 0.1
+              max: 2.0
+              step: 0.1
+              unit_of_measurement: "°C"
+              mode: box
+
+        stop_deadband:
+          name: Stop deadband
+          description: >
+            Heating stops this many degrees above target; cooling stops this many
+            degrees below target. Use 0.0 to stop exactly at target.
+          default: 0.0
+          selector:
+            number:
+              min: 0.0
+              max: 2.0
+              step: 0.1
+              unit_of_measurement: "°C"
+              mode: box
+
+        minimum_run_time:
+          name: Minimum run time
+          description: >
+            Minimum time, in seconds, to leave the physical unit on before an
+            automatic target-satisfied stop. Manual OFF and mode reversal still
+            switch it off immediately.
+          default: 180
+          selector:
+            number:
+              min: 0
+              max: 1800
+              step: 30
+              unit_of_measurement: seconds
+              mode: box
+
+        minimum_off_time:
+          name: Minimum off time
+          description: >
+            Minimum time, in seconds, after switching off before starting again.
+            This also protects a heat-to-cool or cool-to-heat reversal.
+          default: 180
+          selector:
+            number:
+              min: 0
+              max: 1800
+              step: 30
+              unit_of_measurement: seconds
+              mode: box
+
+    limits:
+      name: Physical setpoint limits
